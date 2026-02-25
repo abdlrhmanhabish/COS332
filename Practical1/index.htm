@@ -1,0 +1,78 @@
+<!--Abdelrahman Ahmed 24898008 && Hamdaan Mirza 24631494-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="author" content="u24898008 && u24631494">
+    <title>Home</title>
+    <link rel="icon" type="image/png" href="img/home_icon.png"> 
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Verdana, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: #121212; 
+            height: 100vh;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            display: flex;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(to right, white, white);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        img {
+            margin: 0 auto 2rem auto;
+            border-radius: 10px;
+            display: block;
+            box-shadow: 0 3px 15px rgba(0,0,0,0.3);
+            transition: transform 0.4s ease;
+        }
+
+        img:hover {
+            transform: scale(1.1);
+        }
+
+        .button {
+            display: inline-block;
+            text-decoration: none;
+            background: linear-gradient(to right, #ff416c, #ff4b2b);
+            color: white;
+            font-size: 1.2rem;
+            font-weight: bold;
+            padding: 15px 40px;
+            border-radius: 50px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(255, 75, 43, 0.3);
+        }
+
+        .button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(255, 75, 43, 0.5);
+            filter: brightness(1.0);
+        }
+
+        .button:active {
+            transform: translateY(1px);
+        }
+    </style>
+</head>
+<body>
+    <div>
+      <h1>COMPARE & WIN</h1>
+      <img src="img/home_photo.png" alt=" A poster of the game" width="340" height="250">
+      <a href="/cgi-bin/game" class="button">PLAY</a>
+    </div>
+</body>
+</html>
