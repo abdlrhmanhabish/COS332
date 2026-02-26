@@ -62,9 +62,7 @@ public class TelnetServer {
                     String dateStr = record.substring(record.indexOf("#") + 1, record.indexOf("@"));
                     String timeStr = record.substring(record.indexOf("@") + 1, record.indexOf(">"));
                     String withWhomStr = record.substring(record.indexOf(">") + 1, record.indexOf("<"));
-                    int id = Integer.parseInt(idStr);
-                    String withwhom = withWhomStr.replace("_", "");
-                    Appointment appointment = new Appointment(id, dateStr, timeStr, withwhom);
+                    Appointment appointment = new Appointment(Integer.parseInt(idStr), dateStr, timeStr, withWhomStr);
                     appointments.add(appointment);
                 }
             } catch (IOException e) {
