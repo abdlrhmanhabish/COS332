@@ -28,18 +28,19 @@ public class TelnetServer {
             this.withWhom = withWhom;
         }
 
-        public String print() {
-            return "ID: " + getId() + "\n" + "Date: " + getDate() + "\n" +
-                   "Time: " + getTime() + "\n" + "Staff: " + getWithWhom() + "\n";
-        }
-
         // Print appointment details to PrintWriter (for telnet output)
         public void printTo(PrintWriter out) {
             out.print("ID: " + getId() + "\r\n");
             out.print("Date: " + getDate() + "\r\n");
             out.print("Time: " + getTime() + "\r\n");
-            out.print("Staff: " + getWithWhom() + "\r\n");
+            out.print("With: " + getWithWhom() + "\r\n");
             out.flush();
+        }
+
+        // Print appointment details to textfile (for databse storage)
+        public String getTxtFormat() {
+            String output = String.valueOf(id) + "#" + date + "@" + time + ">" + withWhom + "<";
+            return output;
         }
 
         // Getters
@@ -86,7 +87,8 @@ public class TelnetServer {
     // Helper method to find appointment by ID
     private static Appointment findAppointmentById(ArrayList<Appointment> appointments, int id) {
         for (Appointment a : appointments) {
-            if (a.getId() == id) return a;
+            if (a.getId() == id)
+                return a;
         }
         return null;
     }
@@ -95,7 +97,8 @@ public class TelnetServer {
     private static int getNextAppointmentId(ArrayList<Appointment> appointments) {
         int newId = 1;
         for (Appointment a : appointments) {
-            if (a.getId() >= newId) newId = a.getId() + 1;
+            if (a.getId() >= newId)
+                newId = a.getId() + 1;
         }
         return newId;
     }
@@ -139,6 +142,7 @@ public class TelnetServer {
                     Appointment appointment = new Appointment(Integer.parseInt(idStr), dateStr, timeStr, withWhomStr);
                     appointments.add(appointment);
                 }
+                br.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -156,6 +160,12 @@ public class TelnetServer {
 
                 // quit command to close connection
                 if (line.equalsIgnoreCase("exit") || line.equalsIgnoreCase("quit")) {
+                    BufferedWriter br = new BufferedWriter(new FileWriter("appointments.txt"));
+                    for (Appointment a : appointments) {
+                        br.write(a.getTxtFormat());
+                        br.newLine();
+                    }
+                    br.close();
                     output.print("Goodbye!\r\n");
                     output.flush();
                     break;
@@ -169,7 +179,8 @@ public class TelnetServer {
                     } else {
                         output.print("Appointments: \r\n");
                         output.flush();
-                        for (Appointment a : appointments) a.printTo(output);
+                        for (Appointment a : appointments)
+                            a.printTo(output);
                     }
                 }
 
@@ -183,29 +194,33 @@ public class TelnetServer {
                         output.print("Enter date (YYYY-MM-DD):\r\n");
                         output.flush();
                         String dateInput = input.readLine();
-                        if (dateInput == null) break;
+                        if (dateInput == null)
+                            break;
                         dateInput = dateInput.trim();
 
                         output.print("Enter time (HH:MM:SS):\r\n");
                         output.flush();
                         String timeInput = input.readLine();
-                        if (timeInput == null) break;
+                        if (timeInput == null)
+                            break;
                         timeInput = timeInput.trim();
 
                         output.print("Enter name of Staff:\r\n");
                         output.flush();
                         String withWhomInput = input.readLine();
-                        if (withWhomInput == null) break;
+                        if (withWhomInput == null)
+                            break;
                         withWhomInput = withWhomInput.trim();
 
-                        // add new appointment
+                        // add new appointment to array
                         Appointment newAppointment = new Appointment(newId, dateInput, timeInput, withWhomInput);
                         appointments.add(newAppointment);
 
                         output.print("Appointment added successfully with ID: " + newId + "\r\n");
                         output.flush();
                     } catch (IllegalArgumentException e) {
-                        output.print("Error: Wrong date or time format. Please use YYYY-MM-DD for date and HH:MM:SS for time.\r\n");
+                        output.print(
+                                "Error: Wrong date or time format. Please use YYYY-MM-DD for date and HH:MM:SS for time.\r\n");
                         output.flush();
                         output.flush();
                     }
@@ -220,7 +235,8 @@ public class TelnetServer {
                         output.print("Enter the ID of the appointment to delete:\r\n");
                         output.flush();
                         String idInput = input.readLine();
-                        if (idInput == null) break;
+                        if (idInput == null)
+                            break;
                         idInput = idInput.trim();
 
                         try {
@@ -232,6 +248,7 @@ public class TelnetServer {
                                 output.print("Appointment with ID " + deleteId + " not found.\r\n");
                                 output.flush();
                             }
+
                         } catch (NumberFormatException e) {
                             output.print("Error: Please enter a valid numeric ID.\r\n");
                             output.flush();
@@ -245,13 +262,14 @@ public class TelnetServer {
                     output.flush();
                     output.flush();
                     String idInput = input.readLine();
-                    if (idInput == null) break;
+                    if (idInput == null)
+                        break;
                     idInput = idInput.trim();
 
                     try {
                         int searchId = Integer.parseInt(idInput);
                         Appointment result = findAppointmentById(appointments, searchId);
-                        
+
                         if (result == null) {
                             output.print("No appointment found with ID: " + searchId + "\r\n");
                             output.flush();
@@ -275,7 +293,8 @@ public class TelnetServer {
                         output.print("Enter the ID of the appointment to edit:\r\n");
                         output.flush();
                         String idInput = input.readLine();
-                        if (idInput == null) break;
+                        if (idInput == null)
+                            break;
                         idInput = idInput.trim();
 
                         try {
@@ -285,28 +304,31 @@ public class TelnetServer {
                             if (appointmentToEdit == null) {
                                 output.print("Appointment with ID " + editId + " not found.\r\n");
                                 output.flush();
+
                             } else {
                                 output.print("Appointment found:\r\n");
                                 output.flush();
                                 appointmentToEdit.printTo(output);
-                                
+
                                 output.print("What would you like to edit?\r\n");
                                 output.print("  1 - Date (YYYY-MM-DD) of appointment\r\n");
                                 output.print("  2 - Time (HH:MM:SS) of appointment\r\n");
-                                output.print("  3 - Your appointment with (staff name)\r\n");
+                                output.print("  3 - Your appointment with (Person 's Name)\r\n");
                                 output.print("  0 - Cancel\r\n");
                                 output.print("Enter your choice:\r\n");
                                 output.flush();
-                                
+
                                 String choice = input.readLine();
-                                if (choice == null) break;
+                                if (choice == null)
+                                    break;
                                 choice = choice.trim();
 
                                 if (choice.equals("1")) {
                                     output.print("Enter new date (YYYY-MM-DD):\r\n");
                                     output.flush();
                                     String newDate = input.readLine();
-                                    if (newDate == null) break;
+                                    if (newDate == null)
+                                        break;
                                     newDate = newDate.trim();
                                     appointmentToEdit.setDate(newDate);
                                     output.print("Date updated successfully.\r\n");
@@ -315,7 +337,8 @@ public class TelnetServer {
                                     output.print("Enter new time (HH:MM:SS):\r\n");
                                     output.flush();
                                     String newTime = input.readLine();
-                                    if (newTime == null) break;
+                                    if (newTime == null)
+                                        break;
                                     newTime = newTime.trim();
                                     appointmentToEdit.setTime(newTime);
                                     output.print("Time updated successfully.\r\n");
@@ -324,7 +347,8 @@ public class TelnetServer {
                                     output.print("Enter new staff name:\r\n");
                                     output.flush();
                                     String newName = input.readLine();
-                                    if (newName == null) break;
+                                    if (newName == null)
+                                        break;
                                     newName = newName.trim();
                                     appointmentToEdit.setWithWhom(newName);
                                     output.print("Staff name updated successfully.\r\n");
@@ -341,7 +365,8 @@ public class TelnetServer {
                             output.print("Error: Please enter a valid numeric ID.\r\n");
                             output.flush();
                         } catch (IllegalArgumentException e) {
-                            output.print("Error: Wrong date or time format. Please use YYYY-MM-DD for date and HH:MM:SS for time.\r\n");
+                            output.print(
+                                    "Error: Wrong date or time format. Please use YYYY-MM-DD for date and HH:MM:SS for time.\r\n");
                             output.flush();
                         }
                     }
