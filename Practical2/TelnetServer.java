@@ -104,11 +104,8 @@ public class TelnetServer {
 
         // open server socket
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-            System.out.println("Server listenin on port" + port); // debugging
-
             // open client socket and await connection
             Socket clientSocket = serverSocket.accept();
-            System.out.println("Client connected: " + clientSocket.getInetAddress()); // debugging
 
             // open input and output streams
             BufferedReader input = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
@@ -143,8 +140,6 @@ public class TelnetServer {
             while ((line = input.readLine()) != null) {
                 // clean any extra spaces/newlines sent from telnet
                 line = line.trim();
-
-                System.out.println(line); // debugging
 
                 // echo
                 if (serverEcho && !line.equalsIgnoreCase("echo off")) {
