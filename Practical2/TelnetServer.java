@@ -154,10 +154,6 @@ public class TelnetServer {
 
                 System.out.println(line); // debugging
 
-                // echo input
-                output.print(line + "\r\n");
-                output.flush();
-
                 // quit command to close connection
                 if (line.equalsIgnoreCase("exit") || line.equalsIgnoreCase("quit")) {
                     output.print("Goodbye!\r\n");
