@@ -1,0 +1,34 @@
+Telnet =========>
+
+telnet 127.0.0.1 8888
+
+GET / HTTP/1.1
+Host: 127.0.0.1
+
+GET /Tokyo HTTP/1.1
+Host: 127.0.0.1
+
+POST / HTTP/1.1
+Host: 127.0.0.1
+
+GET /Atlantis HTTP/1.1
+Host: 127.0.0.1
+
+
+
+
+Browser =========>
+
+http://127.0.0.1:8888/
+
+
+
+
+
+Curl ========>
+
+curl.exe -i http://127.0.0.1:8888/
+curl.exe -i "http://127.0.0.1:8888/New%20York"
+curl.exe -i http://127.0.0.1:8888/Atlantis
+curl.exe -I http://127.0.0.1:8888/Tokyo
+curl.exe -i -X POST http://127.0.0.1:8888/
