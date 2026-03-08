@@ -44,8 +44,6 @@ public class WebServer {
         int port = 8888;
         // open server socket
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-            System.out.println("Server is listening on port " + port);
-
             // Accept requests , each on a new thread
             while (true) {
                 Socket s = serverSocket.accept();
@@ -167,7 +165,8 @@ public class WebServer {
         byte[] bodyBytes = "Method Not Allowed".getBytes(StandardCharsets.UTF_8);
         StringBuilder headers = new StringBuilder();
         headers.append("HTTP/1.1 405 Method Not Allowed").append(CRLF)
-                .append("Date: ").append(DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("UTC")))).append(CRLF)
+                .append("Date: ")
+                .append(DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("UTC")))).append(CRLF)
                 .append("Content-Type: text/plain; charset=utf-8").append(CRLF)
                 .append("Content-Length: ").append(bodyBytes.length).append(CRLF)
                 .append("Allow: GET, HEAD").append(CRLF)
@@ -194,7 +193,8 @@ public class WebServer {
 
         StringBuilder headers = new StringBuilder();
         headers.append("HTTP/1.1 ").append(statusCode).append(' ').append(reasonPhrase).append(CRLF)
-                .append("Date: ").append(DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("UTC")))).append(CRLF)
+                .append("Date: ")
+                .append(DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("UTC")))).append(CRLF)
                 .append("Content-Type: ").append(contentType).append(CRLF)
                 .append("Content-Length: ").append(bodyBytes.length).append(CRLF)
                 .append("Cache-Control: no-cache, no-store").append(CRLF)
@@ -229,7 +229,7 @@ public class WebServer {
                 .append("    .box{background:#fff;border-radius:8px;padding:20px 24px;margin-bottom:16px;")
                 .append("box-shadow:0 2px 6px rgba(0,0,0,.12);}\n")
                 .append("    h2{margin:0 0 6px;color:#444;font-size:1.1em;}\n")
-                .append("    .time{font-size:1.5em;font-weight:bold;color:#0057b8;}\n")
+                .append("    .time{font-size:1.5em;font-weight:bold;color:#000000;}\n")
                 .append("    ul{list-style:none;padding:0;display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;}\n")
                 .append("    li a{padding:8px 16px;background:#0057b8;color:#fff;border-radius:5px;")
                 .append("text-decoration:none;font-size:.95em;}\n")
