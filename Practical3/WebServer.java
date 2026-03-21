@@ -70,8 +70,7 @@ public class WebServer {
         }
     }
 
-    // Process a single HTTP request from a client socket and send the appropriate
-    // response
+    // Process a single HTTP request from a client socket and send the appropriate response
     private static void handleClient(Socket s) throws IOException {
         s.setSoTimeout(30000); // 30 s — enough time to type a request in telnet
 
