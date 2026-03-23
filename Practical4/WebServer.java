@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class WebServer {
 
@@ -19,7 +21,7 @@ public class WebServer {
 
     private static final String PRIMARY_DATA_FILE = "Practical2/appointments.txt";
     private static final String FALLBACK_DATA_FILE = "appointments.txt";
-
+    private static final String PICTURES_DIR = "pictures";
     private static final ArrayList<Appointment> appointments = new ArrayList<>();
     private static final Object appointmentsLock = new Object();
     private static String appointmentsFilePath;
@@ -34,14 +36,17 @@ public class WebServer {
         private Date date;
         private Time time;
         private String withWhom;
+        private boolean picture;
 
         public Appointment(int id, String date, String time, String withWhom) {
             this.id = id;
             this.date = Date.valueOf(date);
             this.time = Time.valueOf(time);
             this.withWhom = withWhom;
+            this.picture = false;
         }
-        //getters
+
+        // getters
         public String getTxtFormat() {
             String output = String.valueOf(id) + "#" + date + "@" + time + ">" + withWhom + "<";
             return output;
@@ -62,7 +67,12 @@ public class WebServer {
         public String getWithWhom() {
             return withWhom;
         }
-        //setters
+
+        public boolean getPicture() {
+            return picture;
+        }
+
+        // setters
         public void setDate(String date) {
             this.date = Date.valueOf(date);
         }
@@ -74,18 +84,35 @@ public class WebServer {
         public void setWithWhom(String withWhom) {
             this.withWhom = withWhom;
         }
+
+        public void setPicture(boolean picture) {
+            this.picture = picture;
+        }
     }
 
-    // class to hold parsed HTTP request info
+    // this class holds parsed HTTP request info
     private static class Request {
         final String method;
         final String target;
         final String body;
+        final byte[] bodyBytes;
+        final Map<String, String> headers;
 
-        Request(String method, String target, String body) {
+        Request(String method, String target, String body, byte[] bodyBytes, Map<String, String> headers) {
             this.method = method;
             this.target = target;
             this.body = body;
+            this.bodyBytes = bodyBytes;
+            this.headers = headers;
+        }
+    }
+
+    // this class holds file upload data
+    private static class FileUpload {
+        final byte[] data;
+
+        FileUpload(byte[] data) {
+            this.data = data;
         }
     }
 
@@ -120,15 +147,15 @@ public class WebServer {
         }
     }
 
-    // Process a single HTTP request from a client socket and send the appropriate response
+    // Process a single HTTP request from a client socket and send the appropriate
+    // response
     private static void handleClient(Socket s) throws IOException {
         s.setSoTimeout(30000); // 30 s — enough time to type a request in telnet
 
-        BufferedReader reader = new BufferedReader(
-                new InputStreamReader(s.getInputStream(), StandardCharsets.US_ASCII));
+        InputStream inputStream = s.getInputStream();
         OutputStream output = s.getOutputStream();
 
-        Request request = readRequest(reader);
+        Request request = readRequest(inputStream);
         // If request parsing failed, return 400
         if (request == null) {
             writeResponse(output, 400, "Bad Request", "text/plain; charset=utf-8", "Bad Request", false);
@@ -146,12 +173,35 @@ public class WebServer {
         }
 
         if ("GET".equals(method) || "HEAD".equals(method)) {
+            if (path.startsWith("/picture/")) {
+                try {
+                    int appointmentId = Integer.parseInt(path.substring(9));
+                    byte[] pictureData = loadPicture(appointmentId);
+                    if (pictureData != null) {
+                        writeResponseInBinary(output, 200, "OK", "image/jpeg", pictureData, headOnly);
+                    } else {
+                        writeResponse(output, 404, "Not Found", "text/plain; charset=utf-8", "Picture not found",
+                                headOnly);
+                    }
+                } catch (Exception ignored) {
+                    writeResponse(output, 400, "Bad Request", "text/plain; charset=utf-8", "Invalid picture ID",
+                            headOnly);
+                }
+                return;
+            }
             if (!"/".equals(path)) {
                 writeResponse(output, 404, "Not Found", "text/plain; charset=utf-8", "Not Found", headOnly);
                 return;
             }
             // root route returns HTML main page.
-            String body = buildMainPageHtml("", null);
+            String feedback = "";
+            String fullTarget = request.target;
+            int qIndex = fullTarget.indexOf("?msg=");
+            if (qIndex > 0) {
+                String encoded = fullTarget.substring(qIndex + 5);
+                feedback = decodeURL(encoded);
+            }
+            String body = buildMainPageHtml(feedback, null);
             writeResponse(output, 200, "OK", "text/html; charset=utf-8", body, headOnly);
             return;
         }
@@ -159,40 +209,71 @@ public class WebServer {
         if ("POST".equals(method)) {
             String feedback;
             Appointment searchResult = null;
-            // read POST body variables into a map.
-            Map<String, String> form = parseForm(request.body);
+
+            // Determine content type and parse accordingly
+            String contentType = request.headers.getOrDefault("content-type", "");
+            Map<String, Object> form;
+
+            if (contentType.contains("multipart/form-data")) {
+                form = parseComplexForm(request.bodyBytes, contentType);
+            } else {
+                Map<String, String> urlForm = parseForm(request.body);
+                form = new HashMap<>();
+                for (Map.Entry<String, String> entry : urlForm.entrySet()) {
+                    form.put(entry.getKey(), entry.getValue());
+                }
+            }
 
             try {
                 if ("/add".equals(path)) {
-                    feedback = addAppointment(form.get("date"), form.get("time"), form.get("withWhom"));
+                    String date = getFormString(form, "date");
+                    String time = getFormString(form, "time");
+                    String withWhom = getFormString(form, "withWhom");
+                    FileUpload picture = getFormFile(form, "picture");
+
+                    feedback = addAppointment(date, time, withWhom, picture);
+                    sendRedirect(output, "/?msg=" + encodeURL(feedback));
+                    return;
                 } else if ("/delete".equals(path)) {
-                    feedback = deleteAppointment(form.get("id"));
+                    String id = getFormString(form, "id");
+                    feedback = deleteAppointment(id);
+                    sendRedirect(output, "/?msg=" + encodeURL(feedback));
+                    return;
                 } else if ("/search".equals(path)) {
-                    SearchResponse response = searchAppointment(form.get("id"));
+                    String id = getFormString(form, "id");
+                    SearchResponse response = searchAppointment(id);
                     feedback = response.message;
                     searchResult = response.appointment;
                 } else if ("/edit".equals(path)) {
-                    feedback = editAppointment(form.get("id"), form.get("date"), form.get("time"), form.get("withWhom"));
+                    String id = getFormString(form, "id");
+                    String date = getFormString(form, "date");
+                    String time = getFormString(form, "time");
+                    String withWhom = getFormString(form, "withWhom");
+                    FileUpload picture = getFormFile(form, "picture");
+                    feedback = editAppointment(id, date, time, withWhom, picture);
+                    sendRedirect(output, "/?msg=" + encodeURL(feedback));
+                    return;
                 } else {
                     writeResponse(output, 404, "Not Found", "text/plain; charset=utf-8", "Not Found", false);
                     return;
                 }
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException ignored) {
                 feedback = "Invalid date or time format. Use YYYY-MM-DD and HH:MM:SS.";
+                sendRedirect(output, "/?msg=" + encodeURL(feedback));
+                return;
             }
-
-            // after actions, render updated HTML main page.
+            // after search action, render updated HTML main page.
             String body = buildMainPageHtml(feedback, searchResult);
             writeResponse(output, 200, "OK", "text/html; charset=utf-8", body, false);
             return;
         }
-
         writeMethodNotAllowed(output, headOnly);
     }
 
     // Parse the HTTP request line and consume all headers from the input stream
-    private static Request readRequest(BufferedReader reader) throws IOException {
-        String firstLine = reader.readLine();
+    private static Request readRequest(InputStream inputStream) throws IOException {
+        // Read the request line
+        String firstLine = readLine(inputStream);
         if (firstLine == null || firstLine.isEmpty())
             return null;
 
@@ -201,9 +282,12 @@ public class WebServer {
             return null;
         }
 
-        String line;
+        // Read headers
         Map<String, String> headers = new HashMap<>();
-        while ((line = reader.readLine()) != null) {
+        String line;
+        int contentLength = 0;
+
+        while ((line = readLine(inputStream)) != null) {
             if (line.isEmpty()) {
                 break;
             }
@@ -212,32 +296,61 @@ public class WebServer {
                 String key = line.substring(0, sep).trim().toLowerCase();
                 String value = line.substring(sep + 1).trim();
                 headers.put(key, value);
+                if ("content-length".equals(key)) {
+                    try {
+                        contentLength = Integer.parseInt(value);
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
             }
         }
 
-        int contentLength = 0;
-        if (headers.containsKey("content-length")) {
-            try {
-                contentLength = Integer.parseInt(headers.get("content-length"));
-            } catch (NumberFormatException ignored) {
-                contentLength = 0;
-            }
-        }
-
+        // Read body
+        byte[] bodyBytes = new byte[0];
         String body = "";
         if (contentLength > 0) {
-            char[] payload = new char[contentLength];
+            bodyBytes = new byte[contentLength];
             int readTotal = 0;
             while (readTotal < contentLength) {
-                int read = reader.read(payload, readTotal, contentLength - readTotal);
+                int read = inputStream.read(bodyBytes, readTotal, contentLength - readTotal);
                 if (read == -1)
                     break;
                 readTotal += read;
             }
-            body = new String(payload, 0, readTotal);
+
+            // Trim if needed
+            if (readTotal < contentLength) {
+                byte[] trimmed = new byte[readTotal];
+                System.arraycopy(bodyBytes, 0, trimmed, 0, readTotal);
+                bodyBytes = trimmed;
+            }
+
+            body = new String(bodyBytes, StandardCharsets.UTF_8);
         }
 
-        return new Request(parts[0], parts[1], body);
+        return new Request(parts[0], parts[1], body, bodyBytes, headers);
+    }
+
+    // Helper method to read a line from InputStream (until CRLF)
+    private static String readLine(InputStream inputStream) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        int c;
+        int lastChar = -1;
+
+        while ((c = inputStream.read()) != -1) {
+            if (lastChar == '\r' && c == '\n') {
+                // Remove the \r from the end
+                sb.setLength(sb.length() - 1);
+                return sb.toString();
+            }
+            sb.append((char) c);
+            lastChar = c;
+        }
+
+        if (sb.length() > 0) {
+            return sb.toString();
+        }
+        return null;
     }
 
     // Extract the path from the request target
@@ -272,6 +385,32 @@ public class WebServer {
         output.write(headers.toString().getBytes(StandardCharsets.US_ASCII));
         if (!headOnly)
             output.write(bodyBytes);
+        output.flush();
+    }
+
+    private static void writeResponseInBinary(
+            OutputStream output,
+            int statusCode,
+            String reasonPhrase,
+            String contentType,
+            byte[] body,
+            boolean headOnly) throws IOException {
+        StringBuilder headers = new StringBuilder();
+        headers.append("HTTP/1.1 ").append(statusCode).append(' ').append(reasonPhrase).append(CRLF)
+                .append("Date: ")
+                .append(DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("UTC"))))
+                .append(CRLF)
+                .append("Content-Type: ").append(contentType).append(CRLF)
+                .append("Content-Length: ").append(body.length).append(CRLF)
+                .append("Cache-Control: no-cache, no-store").append(CRLF)
+                .append("Pragma: no-cache").append(CRLF)
+                .append("Connection: close").append(CRLF)
+                .append(CRLF);
+
+        output.write(headers.toString().getBytes(StandardCharsets.US_ASCII));
+        if (!headOnly) {
+            output.write(body);
+        }
         output.flush();
     }
 
@@ -341,8 +480,12 @@ public class WebServer {
 
         if (searchResult != null) {
             sb.append("  <div class=\"panel\">\n")
-                    .append("    <h2>Search Result</h2>\n")
-                    .append("    <p>ID: ").append(searchResult.getId()).append("</p>\n")
+                    .append("    <h2>Search Result</h2>\n");
+            if (searchResult.getPicture()) {
+                sb.append("    <img src=\"/picture/").append(searchResult.getId())
+                        .append("\" style=\"max-width:200px;border-radius:8px;margin-bottom:10px;display:block;\" alt=\"Picture\">\n");
+            }
+            sb.append("    <p>ID: ").append(searchResult.getId()).append("</p>\n")
                     .append("    <p>Date: ").append(escapeHtml(searchResult.getDate().toString())).append("</p>\n")
                     .append("    <p>Time: ").append(escapeHtml(searchResult.getTime().toString())).append("</p>\n")
                     .append("    <p>With: ").append(escapeHtml(searchResult.getWithWhom())).append("</p>\n")
@@ -350,20 +493,29 @@ public class WebServer {
         }
 
         sb.append("  <div class=\"panel\">\n")
-                .append("    <h2>Appointments Database</h2>\n")
+                .append("    <h2>Appointments</h2>\n")
                 .append("    <table>\n")
-                .append("      <thead><tr><th>ID</th><th>Date</th><th>Time</th><th>With</th></tr></thead>\n")
+                .append("      <thead><tr><th>ID</th><th>Date</th><th>Time</th><th>With</th><th>Picture</th></tr></thead>\n")
                 .append("      <tbody>\n");
 
         if (snapshot.isEmpty()) {
-            sb.append("        <tr><td colspan=\"4\">No appointments found.</td></tr>\n");
+            sb.append("        <tr><td colspan=\"5\">No appointments found.</td></tr>\n");
         } else {
             for (Appointment appointment : snapshot) {
                 sb.append("        <tr><td>").append(appointment.getId())
                         .append("</td><td>").append(escapeHtml(appointment.getDate().toString()))
                         .append("</td><td>").append(escapeHtml(appointment.getTime().toString()))
                         .append("</td><td>").append(escapeHtml(appointment.getWithWhom()))
-                        .append("</td></tr>\n");
+                        .append("</td><td>");
+                if (appointment.getPicture()) {
+                    sb.append("<a href=\"/picture/").append(appointment.getId()).append("\" target=\"_blank\">")
+                            .append("<img src=\"/picture/").append(appointment.getId())
+                            .append("\" style=\"max-width:80px;max-height:80px;border-radius:4px;cursor:pointer;\" alt=\"Picture\">")
+                            .append("</a>");
+                } else {
+                    sb.append("-");
+                }
+                sb.append("</td></tr>\n");
             }
         }
 
@@ -374,20 +526,22 @@ public class WebServer {
         sb.append("  <div class=\"forms\">\n")
                 .append("    <div class=\"panel\">\n")
                 .append("      <h2>Add Appointment</h2>\n")
-                .append("      <form action=\"/add\" method=\"POST\">\n")
+                .append("      <form action=\"/add\" method=\"POST\" enctype=\"multipart/form-data\">\n")
                 .append("        <label>Date</label><input type=\"date\" name=\"date\" required>\n")
                 .append("        <label>Time</label><input type=\"time\" step=\"1\" name=\"time\" required>\n")
                 .append("        <label>With Whom</label><input type=\"text\" name=\"withWhom\" required>\n")
+                .append("        <label>Picture (optional)</label><input type=\"file\" name=\"picture\" accept=\"image/*\">\n")
                 .append("        <button type=\"submit\">Add</button>\n")
                 .append("      </form>\n")
                 .append("    </div>\n")
                 .append("    <div class=\"panel\">\n")
                 .append("      <h2>Edit Appointment</h2>\n")
-                .append("      <form action=\"/edit\" method=\"POST\">\n")
+                .append("      <form action=\"/edit\" method=\"POST\" enctype=\"multipart/form-data\">\n")
                 .append("        <label>ID</label><input type=\"number\" min=\"1\" name=\"id\" required>\n")
-                .append("        <label>New Date</label><input type=\"date\" name=\"date\" required>\n")
-                .append("        <label>New Time</label><input type=\"time\" step=\"1\" name=\"time\" required>\n")
-                .append("        <label>New Name</label><input type=\"text\" name=\"withWhom\" required>\n")
+                .append("        <label>New Date (optional)</label><input type=\"date\" name=\"date\">\n")
+                .append("        <label>New Time (optional)</label><input type=\"time\" step=\"1\" name=\"time\">\n")
+                .append("        <label>New Name (optional)</label><input type=\"text\" name=\"withWhom\">\n")
+                .append("        <label>New Picture (optional)</label><input type=\"file\" name=\"picture\" accept=\"image/*\">\n")
                 .append("        <button type=\"submit\">Edit</button>\n")
                 .append("      </form>\n")
                 .append("    </div>\n")
@@ -439,6 +593,12 @@ public class WebServer {
                     String timeStr = record.substring(record.indexOf("@") + 1, record.indexOf(">"));
                     String withWhomStr = record.substring(record.indexOf(">") + 1, record.indexOf("<"));
                     Appointment appointment = new Appointment(Integer.parseInt(idStr), dateStr, timeStr, withWhomStr);
+
+                    // check if the picture file exists on the disk and restore picture flag
+                    File pictureFile = new File(PICTURES_DIR, "picture_" + idStr + ".jpg");
+                    if (pictureFile.exists()) {
+                        appointment.setPicture(true);
+                    }
                     appointments.add(appointment);
                 }
             } catch (IOException e) {
@@ -457,6 +617,40 @@ public class WebServer {
             } catch (IOException e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    private static void ensurePicturesDirectoryExists() {
+        File dir = new File(PICTURES_DIR);
+        if (!dir.exists()) {
+            dir.mkdir();
+        }
+    }
+
+    private static void savePicture(int appointmentId, byte[] imageData) throws IOException {
+        ensurePicturesDirectoryExists();
+        File pictureFile = new File(PICTURES_DIR, "picture_" + appointmentId + ".jpg");
+        try (FileOutputStream fos = new FileOutputStream(pictureFile)) {
+            fos.write(imageData);
+        }
+    }
+
+    private static byte[] loadPicture(int appointmentId) throws IOException {
+        File pictureFile = new File(PICTURES_DIR, "picture_" + appointmentId + ".jpg");
+        if (!pictureFile.exists()) {
+            return null;
+        }
+        byte[] data = new byte[(int) pictureFile.length()];
+        try (FileInputStream fis = new FileInputStream(pictureFile)) {
+            fis.read(data);
+        }
+        return data;
+    }
+
+    private static void deletePicture(int appointmentId) {
+        File pictureFile = new File(PICTURES_DIR, "picture_" + appointmentId + ".jpg");
+        if (pictureFile.exists()) {
+            pictureFile.delete();
         }
     }
 
@@ -501,13 +695,23 @@ public class WebServer {
         }
     }
 
-    private static String addAppointment(String date, String time, String withWhom) {
+    private static String addAppointment(String date, String time, String withWhom, FileUpload picture) {
         if (isBlank(date) || isBlank(time) || isBlank(withWhom)) {
             return "Add failed: all fields are required.";
         }
 
         int newId = getNextAppointmentId();
         Appointment newAppointment = new Appointment(newId, date, normalizeTime(time), withWhom.trim());
+
+        // we add the picture here
+        if (picture != null && picture.data.length > 0) {
+            try {
+                savePicture(newId, picture.data);
+                newAppointment.setPicture(true);
+            } catch (IOException ignored) {
+                return "Appointment added with ID: " + newId + " but picture upload failed.";
+            }
+        }
 
         synchronized (appointmentsLock) {
             appointments.add(newAppointment);
@@ -524,11 +728,12 @@ public class WebServer {
         int deleteId;
         try {
             deleteId = Integer.parseInt(idInput.trim());
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException ignored) {
             return "Delete failed: ID must be numeric.";
         }
 
         if (removeAppointmentById(deleteId)) {
+            deletePicture(deleteId);
             saveAppointments();
             return "Appointment " + deleteId + " deleted successfully.";
         }
@@ -553,7 +758,7 @@ public class WebServer {
         int searchId;
         try {
             searchId = Integer.parseInt(idInput.trim());
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException ignored) {
             return new SearchResponse("Search failed: ID must be numeric.", null);
         }
 
@@ -564,15 +769,16 @@ public class WebServer {
         return new SearchResponse("Appointment found with ID: " + searchId, result);
     }
 
-    private static String editAppointment(String idInput, String date, String time, String withWhom) {
-        if (isBlank(idInput) || isBlank(date) || isBlank(time) || isBlank(withWhom)) {
-            return "Edit failed: ID, date, time, and name are required.";
+    private static String editAppointment(String idInput, String date, String time, String withWhom,
+            FileUpload picture) {
+        if (isBlank(idInput)) {
+            return "Edit failed: ID is required.";
         }
 
         int editId;
         try {
             editId = Integer.parseInt(idInput.trim());
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException ignored) {
             return "Edit failed: ID must be numeric.";
         }
 
@@ -582,23 +788,63 @@ public class WebServer {
         }
 
         synchronized (appointmentsLock) {
-            appointment.setDate(date);
-            appointment.setTime(normalizeTime(time));
-            appointment.setWithWhom(withWhom.trim());
+            // Only update fields that are provided (not empty)
+            if (!isBlank(date)) {
+                appointment.setDate(date);
+            }
+            if (!isBlank(time)) {
+                appointment.setTime(normalizeTime(time));
+            }
+            if (!isBlank(withWhom)) {
+                appointment.setWithWhom(withWhom.trim());
+            }
         }
+
+        // handle picture update
+        if (picture != null && picture.data.length > 0) {
+            try {
+                savePicture(editId, picture.data);
+                appointment.setPicture(true);
+            } catch (IOException ignored) {
+                saveAppointments(); // Still save the other changes
+                return "Appointment " + editId + " updated but picture upload failed.";
+            }
+        }
+
         saveAppointments();
         return "Appointment " + editId + " updated successfully.";
     }
 
     private static String normalizeTime(String time) {
         String trimmed = time.trim();
-        if (trimmed.length() == 5) return trimmed + ":00";
+        if (trimmed.length() == 5)
+            return trimmed + ":00";
         return trimmed;
+    }
+
+    private static String getFormString(Map<String, Object> form, String key) {
+        Object value = form.get(key);
+        if (value instanceof String) {
+            return (String) value;
+        }
+        return null;
+    }
+
+    private static FileUpload getFormFile(Map<String, Object> form, String key) {
+        Object value = form.get(key);
+        if (value instanceof FileUpload) {
+            FileUpload fileUpload = (FileUpload) value;
+            if (fileUpload.data != null && fileUpload.data.length > 0) {
+                return fileUpload;
+            }
+        }
+        return null;
     }
 
     private static Map<String, String> parseForm(String body) {
         Map<String, String> form = new HashMap<>();
-        if (body == null || body.isEmpty()) return form;
+        if (body == null || body.isEmpty())
+            return form;
 
         String[] pairs = body.split("&");
         for (String pair : pairs) {
@@ -618,16 +864,134 @@ public class WebServer {
         return form;
     }
 
+    private static Map<String, Object> parseComplexForm(byte[] bodyBytes, String contentType) {
+        String boundary = extractBoundary(contentType);
+        if (boundary == null) {
+            // fallback to string parsing for non-multipart form
+            String body = new String(bodyBytes, StandardCharsets.UTF_8);
+            Map<String, Object> result = new HashMap<>();
+            for (Map.Entry<String, String> entry : parseForm(body).entrySet()) {
+                result.put(entry.getKey(), entry.getValue());
+            }
+            return result;
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        byte[] boundaryBytes = ("--" + boundary).getBytes(StandardCharsets.UTF_8);
+        String bodyStr = new String(bodyBytes, StandardCharsets.ISO_8859_1);
+        String[] parts = bodyStr.split("--" + Pattern.quote(boundary));
+
+        for (String part : parts) {
+            if (part == null || part.isEmpty() || part.trim().equals("--")) {
+
+                continue;
+            }
+
+            // find the double CRLF that separates headers from content
+            int doubleNewline = part.indexOf("\r\n\r\n");
+            if (doubleNewline == -1) {
+                continue;
+            }
+            String headers = part.substring(0, doubleNewline);
+            int contentStart = doubleNewline + 4;
+
+            // extract the content and being careful about trailing CRLF
+            String content = part.substring(contentStart);
+            if (content.endsWith("\r\n")) {
+                content = content.substring(0, content.length() - 2);
+            }
+
+            String name = extractName(headers);
+            String filename = extractFilename(headers);
+
+            if (name == null)
+                continue;
+
+            if (filename != null) {
+                // preserve binary data
+                byte[] contentBytes = content.getBytes(StandardCharsets.ISO_8859_1);
+                result.put(name, new FileUpload(contentBytes));
+            } else {
+                // regular form field
+                result.put(name, content);
+            }
+        }
+        return result;
+    }
+
+    private static String extractBoundary(String contentType) {
+        if (contentType == null){
+            return null;}
+        int idx = contentType.indexOf("boundary=");
+        if (idx == -1){
+            return null;}
+        return contentType.substring(idx + 9).trim();
+    }
+
+    private static String extractName(String headers) {
+        Pattern p = Pattern.compile("name=\"([^\"]+)\"");
+        Matcher m = p.matcher(headers);
+        if(!m.find()){
+            return null;
+        }
+        return m.group(1);
+    }
+
+    private static String extractFilename(String headers) {
+        Pattern p = Pattern.compile("filename=\"([^\"]+)\"");
+        Matcher m = p.matcher(headers);
+        if(!m.find()){
+            return null;
+        }
+        return m.group(1);
+    }
+
     private static String decodeFormComponent(String value) {
         try {
             return URLDecoder.decode(value, StandardCharsets.UTF_8.name());
-        } catch (UnsupportedEncodingException e) {
+        } catch (UnsupportedEncodingException ignored) {
             return value;
         }
     }
 
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private static void sendRedirect(OutputStream output, String location) throws IOException {
+        byte[] bodyBytes = "".getBytes(StandardCharsets.UTF_8);
+        StringBuilder headers = new StringBuilder();
+        headers.append("HTTP/1.1 303 See Other").append(CRLF)
+                .append("Date: ")
+                .append(DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("UTC")))).append(CRLF)
+                .append("Location: ").append(location).append(CRLF)
+                .append("Content-Length: ").append(bodyBytes.length).append(CRLF)
+                .append("Connection: close").append(CRLF)
+                .append(CRLF);
+        output.write(headers.toString().getBytes(StandardCharsets.US_ASCII));
+        output.flush();
+    }
+
+    private static String encodeURL(String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        try {
+            return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8.name());
+        } catch (java.io.UnsupportedEncodingException ignored) {
+            return value;
+        }
+    }
+
+    private static String decodeURL(String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        try {
+            return java.net.URLDecoder.decode(value, StandardCharsets.UTF_8.name());
+        } catch (java.io.UnsupportedEncodingException ignored) {
+            return value;
+        }
     }
 
     private static String escapeHtml(String text) {
