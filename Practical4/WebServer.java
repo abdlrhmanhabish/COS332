@@ -250,7 +250,8 @@ public class WebServer {
                     String time = getFormString(form, "time");
                     String withWhom = getFormString(form, "withWhom");
                     FileUpload picture = getFormFile(form, "picture");
-                    feedback = editAppointment(id, date, time, withWhom, picture);
+                    String removePicture = getFormString(form, "removePicture");
+                    feedback = editAppointment(id, date, time, withWhom, picture, removePicture);
                     sendRedirect(output, "/?msg=" + encodeURL(feedback));
                     return;
                 } else {
@@ -542,7 +543,10 @@ public class WebServer {
                 .append("        <label>New Time (optional)</label><input type=\"time\" step=\"1\" name=\"time\">\n")
                 .append("        <label>New Name (optional)</label><input type=\"text\" name=\"withWhom\">\n")
                 .append("        <label>New Picture (optional)</label><input type=\"file\" name=\"picture\" accept=\"image/*\">\n")
-                .append("        <button type=\"submit\">Edit</button>\n")
+                .append("        <div style=\"display:flex;gap:8px;\">\n")
+                .append("          <button type=\"submit\">Edit</button>\n")
+                .append("          <button type=\"submit\" name=\"removePicture\" value=\"true\">Remove Picture</button>\n")
+                .append("        </div>\n")
                 .append("      </form>\n")
                 .append("    </div>\n")
                 .append("    <div class=\"panel\">\n")
@@ -770,7 +774,7 @@ public class WebServer {
     }
 
     private static String editAppointment(String idInput, String date, String time, String withWhom,
-            FileUpload picture) {
+            FileUpload picture, String removePicture) {
         if (isBlank(idInput)) {
             return "Edit failed: ID is required.";
         }
@@ -800,7 +804,13 @@ public class WebServer {
             }
         }
 
-        // handle picture update
+        // handle picture removal
+        if (!isBlank(removePicture) && "true".equals(removePicture)) {
+            deletePicture(editId);
+            appointment.setPicture(false);
+        }
+
+        // handle picture update (only if not removing)
         if (picture != null && picture.data.length > 0) {
             try {
                 savePicture(editId, picture.data);
@@ -877,7 +887,6 @@ public class WebServer {
         }
 
         Map<String, Object> result = new HashMap<>();
-        byte[] boundaryBytes = ("--" + boundary).getBytes(StandardCharsets.UTF_8);
         String bodyStr = new String(bodyBytes, StandardCharsets.ISO_8859_1);
         String[] parts = bodyStr.split("--" + Pattern.quote(boundary));
 
