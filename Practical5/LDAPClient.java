@@ -85,8 +85,7 @@ public class LDAPClient {
                 byte[] bindResponse = readBerMessage(in);
                 BindResult bindResult = parseBindResponse(bindResponse, bindMessageId);
                 if (!bindResult.success) {
-                    System.out.println(
-                            "Bind failed. code=" + bindResult.resultCode + " message=" + bindResult.diagnosticMessage);
+                    System.out.println("Bind failed. " + formatLdapResult(bindResult.resultCode, bindResult.matchedDn, bindResult.diagnosticMessage));
                     return;
                 }
 
@@ -107,8 +106,7 @@ public class LDAPClient {
 
                     if (step.type == SearchStepType.DONE) {
                         if (step.resultCode != 0) {
-                            System.out.println(
-                                    "Search failed. code=" + step.resultCode + " message=" + step.diagnosticMessage);
+                            System.out.println("Search failed. " + formatLdapResult(step.resultCode, step.matchedDn, step.diagnosticMessage));
                         } else if (speed == null) {
                             System.out.println("Asset not found or speed attribute missing (" + SPEED_ATTRIBUTE + ").");
                         } else {
@@ -144,6 +142,99 @@ public class LDAPClient {
         }
     }
 
+    // translates LDAP result codes into RFC 4511 names for clearer output (bonus feature)
+    private static String getRFCErrorMessage(int code) {
+        switch (code) {
+            case 0:
+                return "success (0)";
+            case 1:
+                return "operationsError (1)";
+            case 2:
+                return "protocolError (2)";
+            case 3:
+                return "timeLimitExceeded (3)";
+            case 4:
+                return "sizeLimitExceeded (4)";
+            case 5:
+                return "compareFalse (5)";
+            case 6:
+                return "compareTrue (6)";
+            case 7:
+                return "authMethodNotSupported (7)";
+            case 8:
+                return "strongerAuthRequired (8)";
+            case 10:
+                return "referral (10)";
+            case 11:
+                return "adminLimitExceeded (11)";
+            case 12:
+                return "unavailableCriticalExtension (12)";
+            case 13:
+                return "confidentialityRequired (13)";
+            case 14:
+                return "saslBindInProgress (14)";
+            case 16:
+                return "noSuchAttribute (16)";
+            case 17:
+                return "undefinedAttributeType (17)";
+            case 18:
+                return "inappropriateMatching (18)";
+            case 19:
+                return "constraintViolation (19)";
+            case 20:
+                return "attributeOrValueExists (20)";
+            case 21:
+                return "invalidAttributeSyntax (21)";
+            case 32:
+                return "noSuchObject (32)";
+            case 33:
+                return "aliasProblem (33)";
+            case 34:
+                return "invalidDNSyntax (34)";
+            case 36:
+                return "aliasDereferencingProblem (36)";
+            case 48:
+                return "inappropriateAuthentication (48)";
+            case 49:
+                return "invalidCredentials (49) - Wrong password or Bind DN";
+            case 50:
+                return "insufficientAccessRights (50)";
+            case 51:
+                return "busy (51)";
+            case 52:
+                return "unavailable (52)";
+            case 53:
+                return "unwillingToPerform (53)";
+            case 54:
+                return "loopDetect (54)";
+            case 64:
+                return "namingViolation (64)";
+            case 65:
+                return "objectClassViolation (65)";
+            case 66:
+                return "notAllowedOnNonLeaf (66)";
+            case 67:
+                return "notAllowedOnRDN (67)";
+            case 68:
+                return "entryAlreadyExists (68)";
+            case 69:
+                return "objectClassModsProhibited (69)";
+            case 71:
+                return "affectsMultipleDSAs (71)";
+            case 80:
+                return "other (80)";
+            default:
+                return "Error code " + code;
+        }
+    }
+
+    // formats LDAPResult fields so debugging output matches RFC 4511 structure
+    private static String formatLdapResult(int resultCode, String matchedDn, String diagnosticMessage) {
+        String safeMatchedDn = matchedDn == null ? "" : matchedDn;
+        String safeDiagnostic = diagnosticMessage == null ? "" : diagnosticMessage;
+        return "resultCode=" + getRFCErrorMessage(resultCode) + " matchedDN='" + safeMatchedDn + "'" + " diagnosticMessage='" + safeDiagnostic + "'";
+    }
+
     // wraps ldap v3 simple bind into an ldapmessage
     private static byte[] buildBindRequest(int messageId, String bindDn, String password) {
         byte[] version = encodeInteger(3);
@@ -168,10 +259,17 @@ public class LDAPClient {
         byte[] sizeLimit = encodeInteger(1);
         byte[] timeLimit = encodeInteger(5);
         byte[] typesOnlyFalse = encodeBoolean(false);
-        byte[] filterAttribute = encodeOctetString("cn");
-        byte[] filterValue = encodeOctetString(escapeFilterValue(assetCn));
-        byte[] equalityMatchContent = concat(filterAttribute, filterValue);
-        byte[] filter = encodeContextConstructed(3, equalityMatchContent);
+        byte[] filter;
+        if (assetCn.equals("*")) {
+            // RFC 4511 Presence Match [7]: Tag 0x87 = Context-specific, Primitive, tag number 7
+            filter = encodeContextPrimitive(7, "cn".getBytes(StandardCharsets.UTF_8));
+        } else {
+            // RFC 4511 Equality Match [3]
+            byte[] filterAttribute = encodeOctetString("cn");
+            byte[] filterValue = encodeOctetString(escapeFilterValue(assetCn));
+            byte[] equalityMatchContent = concat(filterAttribute, filterValue);
+            filter = encodeContextConstructed(3, equalityMatchContent);
+        }
         byte[] attributes = encodeSequence(encodeOctetString(attributeName));
         byte[] searchContent = concat(baseObject, scopeSingleLevel, derefNever, sizeLimit, timeLimit, typesOnlyFalse, filter, attributes);
         byte[] searchRequest = encodeApplicationConstructed(3, searchContent);
@@ -216,11 +314,12 @@ public class LDAPClient {
 
         BerReader bindResponse = ldapMessage.readExpectedTagAsReader(0x61);
         int resultCode = bindResponse.readEnumerated();
-        bindResponse.readOctetString();
+        String matchedDn = bindResponse.readOctetString();
         String diagnostic = bindResponse.readOctetString();
 
         BindResult result = new BindResult();
         result.resultCode = resultCode;
+        result.matchedDn = matchedDn;
         result.diagnosticMessage = diagnostic;
         result.success = resultCode == 0;
         return result;
@@ -266,11 +365,12 @@ public class LDAPClient {
         if (opTag == 0x65) {
             BerReader done = ldapMessage.readExpectedTagAsReader(0x65);
             int code = done.readEnumerated();
-            done.readOctetString();
+            String matchedDn = done.readOctetString();
             String diagnostic = done.readOctetString();
             SearchStepResult result = new SearchStepResult();
             result.type = SearchStepType.DONE;
             result.resultCode = code;
+            result.matchedDn = matchedDn;
             result.diagnosticMessage = diagnostic;
             return result;
         }
@@ -450,12 +550,14 @@ public class LDAPClient {
     private static class BindResult {
         boolean success;
         int resultCode;
+        String matchedDn;
         String diagnosticMessage;
     }
 
     private static class SearchStepResult {
         SearchStepType type;
         int resultCode;
+        String matchedDn;
         String diagnosticMessage;
         String attributeValue;
     }
