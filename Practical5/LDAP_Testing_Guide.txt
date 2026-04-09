@@ -1,0 +1,276 @@
+website to get the error codes https://datatracker.ietf.org/doc/html/rfc4511#section-4.1.9
+
+Suggested sample entries:
+- cn=ToyotaCorolla, description=180
+- cn=VWGolfGTI, description=250
+- cn=FordMustangGT, description=250
+- cn=BMWM3, description=290
+- cn=Porsche911Carrera, description=293
+
+4. Enter prompts exactly as follows (default local setup):
+    - LDAP server host (default: localhost):
+       Type: localhost
+       Note: Do NOT type 389 here. This field is host name/IP only.
+    - Base DN (default: dc=assets,dc=local):
+       Type: dc=assets,dc=local
+    - Bind DN (required for simple bind):
+       Type: cn=admin,dc=assets,dc=local
+       Note: If your server uses a different admin/user DN, use that exact DN.
+    - Bind password:
+       Type: your LDAP password for the Bind DN above
+    - Asset common name (cn) in OU Automobiles:
+       Type: ToyotaCorolla
+
+========================================
+EXACT STEP-BY-STEP RUN GUIDE
+========================================
+
+Step 4 - Fill each prompt with exact values
+- Prompt: LDAP server host (default: localhost):
+   Fill: localhost
+   Why: The code already uses port 389 internally, so this prompt is host only.
+
+- Prompt: Base DN (default: dc=assets,dc=local):
+   Fill: dc=assets,dc=local
+
+- Prompt: Bind DN (required for simple bind):
+   Fill: cn=admin,dc=assets,dc=local
+   If this does not work, ask your LDAP setup for the exact login DN and use that.
+
+- Prompt: Bind password:
+   Fill: your real password for that Bind DN
+
+- Prompt: Asset common name (cn) in OU Automobiles:
+   Fill: ToyotaCorolla
+
+Step 5 - Check expected output
+- You should see:
+   Maximum speed for ToyotaCorolla: 180 km/h
+
+Step 6 - Run second positive check
+- Run again with asset cn = BMWM3
+- Expected:
+   Maximum speed for BMWM3: 290 km/h
+
+========================================
+Demo Session
+========================================
+
+Command:
+java LDAPClient
+
+Inputs:
+LDAP server host (default: localhost): localhost
+Base DN (default: dc=assets,dc=local): dc=assets,dc=local
+Bind DN (required for simple bind): cn=admin,dc=assets,dc=local
+Bind password: adminpassword
+Asset common name (cn) in OU Automobiles: ToyotaCorolla
+
+Expected output:
+Maximum speed for ToyotaCorolla: 180 km/h
+
+Expected success output format:
+- Maximum speed for <assetName>: <number> km/h
+
+========================================
+POSITIVE TESTS
+========================================
+
+PT1 - Valid bind and existing asset
+Purpose:
+- Verify full successful flow (connect, bind, search, parse speed, print result)
+Input:
+- Host: localhost
+- Base DN: dc=assets,dc=local
+- Valid Bind DN and password
+- Asset cn: ToyotaCorolla
+Expected result:
+- Program prints: Maximum speed for ToyotaCorolla: 180 km/h
+
+PT2 - Another valid existing asset
+Purpose:
+- Verify lookup for another valid entry
+Input:
+- Same valid host/base/bind
+- Asset cn: BMWM3
+Expected result:
+- Program prints: Maximum speed for BMWM3: 290 km/h
+
+PT3 - Custom host and base DN (non-default)
+Purpose:
+- Verify user-supplied host and base DN work
+Input:
+- Host: <your LDAP host>
+- Base DN: <your LDAP base>
+- Valid Bind DN/password for that server
+- Asset cn present in that directory
+Expected result:
+- Program prints correct maximum speed
+
+PT4 - Wildcard presence filter (RFC 4511 [7])
+Purpose:
+- Verify that entering * uses Presence Match instead of Equality Match
+Input:
+- Host: localhost
+- Base DN: dc=assets,dc=local
+- Valid Bind DN/password
+- Asset cn: *
+Expected result:
+- Search executes successfully
+- Program returns one matching entry from OU Automobiles (size limit is 1)
+- If returned entry has numeric description, prints maximum speed
+
+========================================
+NEGATIVE TESTS
+========================================
+
+NT1 - Missing Bind DN
+Purpose:
+- Validate required input check
+Input:
+- Bind DN: leave empty
+Expected result:
+- Program prints: Bind DN is required.
+- Program exits
+
+NT2 - Missing asset name
+Purpose:
+- Validate required input check
+Input:
+- Asset common name: leave empty
+Expected result:
+- Program prints: Asset name is required.
+- Program exits
+
+NT3 - Wrong Bind password
+Purpose:
+- Validate bind failure handling
+Input:
+- Correct host/base/bind DN
+- Wrong password
+Expected result:
+- Program prints: Bind failed. resultCode=<RFC_name_and_code> matchedDN='<value>' diagnosticMessage='<value>'
+- Search is not attempted
+
+NT4 - Invalid Bind DN
+Purpose:
+- Validate bind DN error handling
+Input:
+- Correct host/base
+- Non-existing Bind DN
+- Any password
+Expected result:
+- Program prints bind failure with RFC result details (resultCode, matchedDN, diagnosticMessage)
+
+NT5 - Non-existing asset cn
+Purpose:
+- Validate not-found handling
+Input:
+- Valid bind
+- Asset cn: SomethingNotInDirectory
+Expected result:
+- Program prints: Asset not found or speed attribute missing (description).
+
+NT6 - Asset exists but description missing
+Purpose:
+- Validate missing attribute handling
+Input:
+- Valid bind
+- Asset entry without description attribute
+Expected result:
+- Program prints not found/missing attribute message
+
+NT7 - Asset speed not numeric
+Purpose:
+- Validate number parsing protection
+Input:
+- Valid bind
+- Asset entry where description=fast (or any non-integer)
+Expected result:
+- Program prints: Found asset, but speed is not an integer: 'fast'
+
+NT8 - LDAP server not running / wrong host
+Purpose:
+- Validate socket I/O error handling
+Input:
+- Host: wrong hostname OR stop LDAP server
+Expected result:
+- Program prints: I/O error: <connection error>
+
+NT9 - Wrong base DN
+Purpose:
+- Validate search/base error behavior
+Input:
+- Valid host and bind
+- Base DN set to non-existing DN
+Expected result:
+- Program prints search failure with RFC result details (resultCode, matchedDN, diagnosticMessage)
+  OR prints not found/missing attribute message depending on server response
+
+NT10 - Wrong port scenario
+Purpose:
+- Validate connection limitation (client is fixed to port 389)
+Input:
+- LDAP server running on a different port only
+Expected result:
+- Program cannot connect and prints I/O error
+Note:
+- Current code uses fixed port 389; changing port requires source update.
+
+NT11 - Wildcard with invalid search base
+Purpose:
+- Validate wildcard path still respects LDAPResult errors
+Input:
+- Valid host and bind
+- Base DN: dc=wrong,dc=local
+- Asset cn: *
+Expected result:
+- Program prints search failure with RFC result details
+- Typical resultCode: noSuchObject (32)
+
+========================================
+RFC 4511 IMPLEMENTATION LINES
+========================================
+
+LDAPResult usage in runtime output:
+- Bind failure output uses full LDAPResult formatting:
+   - LDAPClient.java:87-90
+- Search failure output uses full LDAPResult formatting:
+   - LDAPClient.java:109-112
+
+Result code mapping to RFC 4511 names:
+- getRFCErrorMessage(int code):
+   - LDAPClient.java:149-231
+
+LDAPResult formatter (resultCode + matchedDN + diagnosticMessage):
+- formatLdapResult(...):
+   - LDAPClient.java:235-240
+
+Bind response parsing now reads LDAPResult fields:
+- parseBindResponse(...):
+   - LDAPClient.java:304-324
+   - resultCode read: line 314
+   - matchedDN read: line 315
+   - diagnosticMessage read: line 316
+
+Search done parsing now reads LDAPResult fields:
+- parseSearchStep(...), SearchResultDone branch:
+   - LDAPClient.java:363-373
+   - resultCode read: line 365
+   - matchedDN read: line 366
+   - diagnosticMessage read: line 367
+
+Data holders updated for matchedDN:
+- BindResult.matchedDn:
+   - LDAPClient.java:546-550
+- SearchStepResult.matchedDn:
+   - LDAPClient.java:553-557
+
+Presence filter implementation (new feature):
+- buildSearchRequest(...) wildcard branch:
+   - LDAPClient.java:255-277
+   - Presence check for *: line 263
+   - Presence Match tag [7] encoding: line 265
+   - Equality Match fallback [3]: lines 267-271
+
+
