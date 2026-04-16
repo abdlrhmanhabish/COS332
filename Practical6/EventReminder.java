@@ -187,13 +187,14 @@ public class EventReminder {
 
     public static void main(String[] args) {
         if (args.length < 4) {
-            System.out.println("Usage: java EventReminder <smtpHost> <smtpPort> <fromEmail> <toEmail>");
+            System.out.println("How to use the program: java EventReminder <smtpHost> <smtpPort> <fromEmail> <toEmail>");
             System.out.println("Example: java EventReminder localhost 25 reminders@local.test you@local.test");
             return;
         }
 
         String smtpHost = args[0];
         int smtpPort;
+
         try {
             smtpPort = Integer.parseInt(args[1]);
         } catch (NumberFormatException e) {
@@ -211,7 +212,7 @@ public class EventReminder {
         List<Event> reminders = getEventsToRemind(allEvents, today);
 
         if (reminders.isEmpty()) {
-            System.out.println("No events coming up in " + REMINDER_DAYS_AHEAD + " days, so no email was sent.");
+            System.out.println("No email was sent beaucse there are no events coming up in " + REMINDER_DAYS_AHEAD + " days.");
             return;
         }
 
@@ -221,9 +222,9 @@ public class EventReminder {
 
         try {
             sendEmail(smtpHost, smtpPort, fromAddress, toAddress, subject, body);
-            System.out.println("Reminder email sent to " + toAddress + " with " + reminders.size() + " event(s).");
+            System.out.println("An email to" + toAddress + " with " + reminders.size() + " event(s) info was sent as a reminder.");
         } catch (IOException e) {
-            System.err.println("Failed to send email: " + e.getMessage());
+            System.err.println("Failed to send an email: " + e.getMessage());
         }
     }
 }
