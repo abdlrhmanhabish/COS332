@@ -10,11 +10,19 @@ import java.net.Socket;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.time.ZonedDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.UUID;
 
 public class EventReminder {
 
     private static final int REMINDER_DAYS_AHEAD = 6;
     private static final String EVENTS_FILE = "events.txt";
+    private static final String DEFAULT_SMTP_HOST = "localhost";
+    private static final int DEFAULT_SMTP_PORT = 1025;
+    private static final String DEFAULT_FROM_EMAIL = "reminders@local.test";
+    private static final String DEFAULT_TO_EMAIL = "you@local.test";
 
     private static class Event {
         private final int day;
@@ -152,9 +160,14 @@ public class EventReminder {
             String response = readServerReply(in);
             checkReplyCode(response, 220);
 
-            sendCommand(out, "HELO localhost");
+            // bonus marks RFC 5321 Section 4.1.1.1, modern SMTP server wants EHLO and not HELO, readServersReply handles the multiple line list thing
+            sendCommand(out, "EHLO localhost");
             response = readServerReply(in);
-            checkReplyCode(response, 250);
+            if (!response.startsWith("250")) {
+                sendCommand(out, "HELO localhost");
+                response = readServerReply(in);
+                checkReplyCode(response, 250);
+            }
 
             sendCommand(out, "MAIL FROM:<" + from + ">");
             response = readServerReply(in);
@@ -171,6 +184,11 @@ public class EventReminder {
             out.write("From: " + from + "\r\n");
             out.write("To: " + to + "\r\n");
             out.write("Subject: " + subject + "\r\n");
+            // bonus marks: RFC 5322 Section 3.6, requires date header in  rfc 1123 format
+            out.write("Date: " + DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("UTC"))));
+            out.write("\r\n");
+            // bonus marks: unique message ID, format is not strictly defined but this is a common approach
+            out.write("MessageID: <" + UUID.randomUUID().toString() + "@eventreminder.local>\r\n");
             out.write("\r\n");
             out.write(body + "\r\n");
             out.write(".\r\n");
@@ -186,24 +204,30 @@ public class EventReminder {
     }
 
     public static void main(String[] args) {
-        if (args.length < 4) {
-            System.out.println("How to use the program: java EventReminder <smtpHost> <smtpPort> <fromEmail> <toEmail>");
-            System.out.println("Example: java EventReminder localhost 25 reminders@local.test you@local.test");
+        // we use default values in case user doesnt want to sepcify hes details
+        String smtpHost = DEFAULT_SMTP_HOST;
+        int smtpPort = DEFAULT_SMTP_PORT;
+        String fromAddress = DEFAULT_FROM_EMAIL;
+        String toAddress = DEFAULT_TO_EMAIL;
+
+        if (args.length != 0 && args.length != 4) {
+            System.out.println("Usage: java EventReminder [<smtpHost> <smtpPort> <fromEmail> <toEmail>]");
+            System.out.println("We use default coz nothing provided: " + DEFAULT_SMTP_HOST + " " + DEFAULT_SMTP_PORT + " " + DEFAULT_FROM_EMAIL + " " + DEFAULT_TO_EMAIL);
             return;
         }
 
-        String smtpHost = args[0];
-        int smtpPort;
-
-        try {
-            smtpPort = Integer.parseInt(args[1]);
-        } catch (NumberFormatException e) {
-            System.err.println("Invalid SMTP port: " + args[1]);
-            return;
+        // If we get this then we assume user will enter all detiaals and we won't use any default values
+        if (args.length == 4) {
+            smtpHost = args[0];
+            try {
+                smtpPort = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid SMTP port: " + args[1]);
+                return;
+            }
+            fromAddress = args[2];
+            toAddress = args[3];
         }
-
-        String fromAddress = args[2];
-        String toAddress = args[3];
 
         List<Event> allEvents = new ArrayList<>();
         readEventsFromFile(allEvents);
@@ -212,7 +236,6 @@ public class EventReminder {
         List<Event> reminders = getEventsToRemind(allEvents, today);
 
         if (reminders.isEmpty()) {
-            System.out.println("No email was sent beaucse there are no events coming up in " + REMINDER_DAYS_AHEAD + " days.");
             return;
         }
 

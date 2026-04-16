@@ -1,0 +1,32 @@
+EventReminder Demo (Concise)
+
+https://datatracker.ietf.org/doc/html/rfc5321
+https://datatracker.ietf.org/doc/html/rfc5322
+
+Expected no-event behavior
+- Yes: if no event is exactly 6 days from today, the program should terminate silently (no output).
+
+One-time compile
+- cd /home/hamdaan_mirza/COS332/Practical6
+- javac EventReminder.java
+
+Start SMTP debug server 
+- python3 -m smtpd -c DebuggingServer -n localhost:1025
+
+Test case A: No reminder (silent)
+- cp events_no_match.txt events.txt
+- java EventReminder
+- Expected: no output in this terminal, and no MESSAGE FOLLOWS in Terminal 1.
+
+Test case B: Reminder sent
+- cp events_match.txt events.txt
+- java EventReminder
+- Expected in app terminal: success message about email sent.
+- Expected in Terminal 1: MESSAGE FOLLOWS block with Subject and event lines.
+
+=================================================
+While RFC 5321 dictates how the mail is transferred, RFC 5322 dictates how the email text itself must be formatted. 
+Basic scripts only send the 'From', 'To', and 'Subject' lines. However, Section 3.6 of RFC 5322 explicitly states that 
+the Origination Date field is legally mandatory for a valid message. Therefore, we used Java's ZonedDateTime to dynamically 
+inject the Date header in the required RFC 1123 format. We also added a generated Message-ID, which Section 3.6.4 highly 
+recommends to prevent modern spam filters from rejecting our raw packets
