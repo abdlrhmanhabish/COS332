@@ -4,11 +4,43 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class MockMailServer {
+public class server {
+
+    private static final AtomicInteger SENDER_COUNTER = new AtomicInteger(1);
+
+    private static int envIntOrDefault(String name, int fallback) {
+        String value = System.getenv(name);
+        if (value == null || value.trim().isEmpty()) return fallback;
+
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static String envStringOrDefault(String name, String fallback) {
+        String value = System.getenv(name);
+        if (value == null || value.trim().isEmpty()) return fallback;
+        return value.trim();
+    }
+
+    private static int parseTopMessageNumber(String line) {
+        String[] parts = line.trim().split("\\s+");
+        if (parts.length < 2) return 1;
+        try {
+            return Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
 
     public static void main(String[] args) {
-        System.out.println("Starting Mock Mail Servers for Testing...");
+        final int mockMessageCount = Math.max(0, envIntOrDefault("MOCK_POP3_COUNT", 1));
+        final String mockSubject = envStringOrDefault("MOCK_POP3_SUBJECT", "prac7");
+        final String senderMode = envStringOrDefault("MOCK_POP3_SENDER_MODE", "unique").toLowerCase();
 
         // Start POP3 Dummy Server on Port 1110
         new Thread(() -> {
@@ -27,11 +59,21 @@ public class MockMailServer {
                             if (line.startsWith("USER") || line.startsWith("PASS")) {
                                 out.write("+OK\r\n");
                             } else if (line.startsWith("STAT")) {
-                                out.write("+OK 1 250\r\n"); // 1 dummy email
+                                out.write("+OK " + mockMessageCount + " 250\r\n");
                             } else if (line.startsWith("TOP")) {
+                                int messageNumber = parseTopMessageNumber(line);
+                                int senderId = SENDER_COUNTER.getAndIncrement();
+                                String sender;
+                                if ("fixed".equals(senderMode)) {
+                                    sender = "marker@university.edu";
+                                } else {
+                                    sender = "marker" + senderId + "@university.edu";
+                                }
+
                                 out.write("+OK\r\n");
-                                out.write("From: <marker@university.edu>\r\n");
-                                out.write("Subject: prac7\r\n");
+                                out.write("From: <" + sender + ">\r\n");
+                                out.write("Subject: " + mockSubject + "\r\n");
+                                out.write("X-Mock-Message-Number: " + messageNumber + "\r\n");
                                 out.write(".\r\n"); // End of TOP output
                             } else if (line.startsWith("QUIT")) {
                                 out.write("+OK Bye\r\n");
@@ -63,7 +105,6 @@ public class MockMailServer {
                                 out.write("354 Start mail input; end with <CRLF>.<CRLF>\r\n");
                                 out.flush();
                                 System.out.println("\n--- [SMTP] RECEIVED AUTO-REPLY ---");
-                                // Read the email body until the single dot
                                 while ((line = in.readLine()) != null) {
                                     System.out.println(line);
                                     if (line.equals(".")) break;
@@ -75,7 +116,7 @@ public class MockMailServer {
                                 out.flush();
                                 break;
                             } else {
-                                out.write("250 OK\r\n"); // Generic success for HELO, MAIL FROM, RCPT TO
+                                out.write("250 OK\r\n"); 
                             }
                             out.flush();
                         }

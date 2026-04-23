@@ -1,58 +1,71 @@
 VacationResponder Demo Guide
 ============================
 
+Prac 7 Clarification
+--------------------
+This implementation is for the vacation responder only.
+The second part in the original handout (unwanted email deleter) is intentionally ignored.
+
+Vacation Responder Requirements Covered
+---------------------------------------
+- Checks mailbox repeatedly using POP3.
+- Sends auto-reply using SMTP.
+- Replies only when Subject is exactly: prac7.
+- Uses each configured tester reply target once (tracked in replied_senders.txt).
+- Skips mailing-list style messages (List-Id/List-Post headers).
+- Does not delete mailbox messages.
+
 Location:
 - Run all commands from the Practical7 folder.
 
 1) Compile
 ----------
+javac server.java
 javac VacationResponder.java
 
-2) Start local mock mail servers (required for localhost demo)
----------------------------------------------------------------
-javac MockMailServers.java
-java MockMailServers
-
-Keep this terminal open.
-
-3) Run with defaults (recommended)
-----------------------------------
-java VacationResponder
-
-This reads settings from:
-- vacation.properties
-
-Current default-style values used in this project:
+2) Default configuration used by VacationResponder
+--------------------------------------------------
+Read from vacation.properties:
 - pop3.host=localhost
 - pop3.port=1110
-- email=vacation@local.test
+- email=secondemail@test.local
 - password=password123
 - smtp.host=localhost
 - smtp.port=1025
 - from.email=reminders@local.test
+- reply.to.emails=tester1@test.com,tester2@test.com
 
-4) Run with command-line arguments (optional)
----------------------------------------------
-Without POP3 port override:
-java VacationResponder localhost vacation@local.test password123 localhost 1025 reminders@local.test
+Note:
+- reminders@local.test is the auto-reply sender address (MAIL FROM), same as Practical 6.
+- RCPT TO rotates between tester1@test.com and tester2@test.com for demo output.
+- Incoming test emails come from mock sender addresses (marker...@university.edu), not tester addresses.
 
-With POP3 port override:
-java VacationResponder localhost vacation@local.test password123 localhost 1025 reminders@local.test 1110
+3) Start mock server (terminal A)
+---------------------------------
+java server
 
-Important:
-- Do NOT type angle brackets like <pop3Host> in bash.
-- Replace sample values with real values when needed.
+Keep this terminal open.
 
-5) Expected startup output
+4) Start VacationResponder (terminal B)
+---------------------------------------
+java VacationResponder
+
+5) When does it stop?
+---------------------
+VacationResponder runs forever in a loop, checking mailbox every 10 seconds.
+It stops only when:
+- You press Ctrl+C in terminal B.
+- The process is interrupted/stopped by the OS.
+
+6) Expected startup output
 --------------------------
 You should see lines similar to:
-- Using file/environment/default configuration.
 - POP3 host: ...
 - POP3 port: ...
 - Loaded X previously replied sender(s).
-- Vacation responder running. Polling every 30 seconds.
+- Vacation responder running. Polling every 10 seconds.
 
-6) If you get "Connection refused"
+7) If you get "Connection refused"
 -----------------------------------
 That means no POP3 service is running at pop3.host:pop3.port.
 
@@ -60,14 +73,106 @@ For this setup, ensure:
 - A POP3 server is listening on localhost:1110
 - An SMTP server is listening on localhost:1025
 
-7) Stop the program
+8) Stop the program
 -------------------
 Press Ctrl+C.
 
-8) Quick behavior test checklist
---------------------------------
-- Send a mail with subject exactly: prac7
-- Confirm one auto-reply is sent
-- Send another mail from the same sender
-- Confirm it is skipped (already replied)
-- Check replied_senders.txt was updated
+9) Test cases for demo (exactly what to show)
+----------------------------------------------
+Before each case, clear old replied history:
+rm -f replied_senders.txt
+
+Case A: Only 1 email works
+Start terminal A with default mock settings (1 message):
+MOCK_POP3_COUNT=1 MOCK_POP3_SUBJECT=prac7 java server
+
+Start terminal B:
+java VacationResponder
+
+Expected:
+- Found 1 email(s) in inbox.
+- Sending auto-reply from reminders@local.test to: tester1@test.com ...
+
+Case B: Multiple emails work
+Stop both terminals, then restart terminal A with 3 messages:
+MOCK_POP3_COUNT=3 MOCK_POP3_SUBJECT=prac7 java server
+
+Restart terminal B:
+java VacationResponder
+
+Expected in terminal B:
+- Found 3 email(s) in inbox.
+- Sends 3 replies in one poll.
+- Sends from reminders@local.test.
+- RCPT TO alternates: tester1@test.com, tester2@test.com, tester1@test.com.
+
+Case C: None work
+Stop both terminals, then restart terminal A with zero messages:
+MOCK_POP3_COUNT=0 java server
+
+Restart terminal B:
+java VacationResponder
+
+Expected:
+- Found 0 email(s) in inbox.
+- No auto-reply sent.
+
+Case D: Wrong subject does not work
+Stop both terminals, then restart terminal A with wrong subject:
+MOCK_POP3_COUNT=1 MOCK_POP3_SUBJECT=not_prac7 java server
+
+Restart terminal B:
+java VacationResponder
+
+Expected in terminal B:
+- Found 1 email(s) in inbox.
+- Skipping marker... (subject is not 'prac7').
+- No auto-reply sent.
+
+Optional extra (dedupe demo):
+Use fixed sender mode to show first works, next polls do not:
+MOCK_POP3_COUNT=1 MOCK_POP3_SUBJECT=prac7 MOCK_POP3_SENDER_MODE=fixed java server
+
+10) How This Works Internally (Exact Flow)
+-------------------------------------------
+1. Program startup
+- VacationResponder loads settings from vacation.properties.
+- It opens/creates replied_senders.txt and loads all senders already replied to.
+
+2. Repeating loop (every 10 seconds)
+- Connects to POP3 server (localhost:1110 in demo).
+- Logs in with USER and PASS.
+- Sends STAT to get number of waiting messages.
+
+3. Per-message inspection
+- For each message number, sends: TOP <messageNumber> 0
+- Reads only headers (not full body), so it does not download whole messages.
+- Extracts:
+	- From
+	- Subject
+	- Mailing-list indicators (List-Id/List-Post)
+
+4. Decision checks (in this order)
+- If sender is missing: skip.
+- If mailing list header exists: skip.
+- If subject is not exactly prac7 (case-insensitive): skip.
+- If sender is already in replied_senders.txt: skip.
+- Otherwise: send auto-reply via SMTP.
+
+5. Sending auto-reply
+- Connects to SMTP server (localhost:1025 in demo).
+- Uses HELO, MAIL FROM, RCPT TO, DATA, QUIT.
+- Sends subject as Re: <original subject>.
+- Sends body: I am currently on vacation and will reply when I return.
+
+6. Persisting "reply once" rule
+- After a successful reply, the tester target (for example tester1@test.com) is appended to replied_senders.txt.
+- Future replies to the same tester target are skipped.
+
+7. Message safety
+- The program never sends DELE to POP3.
+- Therefore, messages are never deleted from mailbox by this program.
+
+8. Stop condition
+- Loop continues forever.
+- Stops only on Ctrl+C (or process termination/interruption).
