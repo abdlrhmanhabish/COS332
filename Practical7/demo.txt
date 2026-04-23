@@ -1,0 +1,73 @@
+VacationResponder Demo Guide
+============================
+
+Location:
+- Run all commands from the Practical7 folder.
+
+1) Compile
+----------
+javac VacationResponder.java
+
+2) Start local mock mail servers (required for localhost demo)
+---------------------------------------------------------------
+javac MockMailServers.java
+java MockMailServers
+
+Keep this terminal open.
+
+3) Run with defaults (recommended)
+----------------------------------
+java VacationResponder
+
+This reads settings from:
+- vacation.properties
+
+Current default-style values used in this project:
+- pop3.host=localhost
+- pop3.port=1110
+- email=vacation@local.test
+- password=password123
+- smtp.host=localhost
+- smtp.port=1025
+- from.email=reminders@local.test
+
+4) Run with command-line arguments (optional)
+---------------------------------------------
+Without POP3 port override:
+java VacationResponder localhost vacation@local.test password123 localhost 1025 reminders@local.test
+
+With POP3 port override:
+java VacationResponder localhost vacation@local.test password123 localhost 1025 reminders@local.test 1110
+
+Important:
+- Do NOT type angle brackets like <pop3Host> in bash.
+- Replace sample values with real values when needed.
+
+5) Expected startup output
+--------------------------
+You should see lines similar to:
+- Using file/environment/default configuration.
+- POP3 host: ...
+- POP3 port: ...
+- Loaded X previously replied sender(s).
+- Vacation responder running. Polling every 30 seconds.
+
+6) If you get "Connection refused"
+-----------------------------------
+That means no POP3 service is running at pop3.host:pop3.port.
+
+For this setup, ensure:
+- A POP3 server is listening on localhost:1110
+- An SMTP server is listening on localhost:1025
+
+7) Stop the program
+-------------------
+Press Ctrl+C.
+
+8) Quick behavior test checklist
+--------------------------------
+- Send a mail with subject exactly: prac7
+- Confirm one auto-reply is sent
+- Send another mail from the same sender
+- Confirm it is skipped (already replied)
+- Check replied_senders.txt was updated

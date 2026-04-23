@@ -2,9 +2,11 @@
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.net.ConnectException;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,14 +18,66 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Properties;
 import java.util.UUID;
 
 public class VacationResponder {
 
-    private static final int PORT = 110;
+    private static final int DEFAULT_POP3_PORT = 110;
     private static final String SUBJECT = "prac7";
     private static final int POLL_INTERVAL = 30;
     private static final String REPLIED_SENDERS = "replied_senders.txt";
+    private static final String CONFIG_FILE = "vacation.properties";
+
+    // Default values for easier local testing when no CLI args are provided.
+    private static final String DEFAULT_POP3_HOST = "localhost";
+    private static final int DEFAULT_POP3_PORT_FALLBACK = 110;
+    private static final String DEFAULT_EMAIL = "vacation@local.test";
+    private static final String DEFAULT_PASSWORD = "password123";
+    private static final String DEFAULT_SMTP_HOST = "localhost";
+    private static final int DEFAULT_SMTP_PORT = 1025;
+    private static final String DEFAULT_FROM_EMAIL = "reminders@local.test";
+
+    private static int envIntOrDefault(String name, int fallback) {
+        String value = System.getenv(name);
+        if (value == null || value.trim().isEmpty())
+            return fallback;
+
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static String envStringOrDefault(String name, String fallback) {
+        String value = System.getenv(name);
+        if (value == null || value.trim().isEmpty())
+            return fallback;
+        return value.trim();
+    }
+
+    private static String propertyOrDefault(Properties properties, String key, String fallback) {
+        String value = properties.getProperty(key);
+        if (value == null || value.trim().isEmpty())return fallback;
+        return value.trim();
+    }
+
+    private static int propertyIntOrDefault(Properties properties, String key, int fallback) {
+        String value = properties.getProperty(key);
+        if (value == null || value.trim().isEmpty()) return fallback;
+
+        try { return Integer.parseInt(value.trim());} 
+        catch (NumberFormatException e) {return fallback;}
+    }
+
+    private static Properties loadConfigProperties(Path configPath) throws IOException {
+        Properties properties = new Properties();
+        if (!Files.exists(configPath)) return properties;
+        try (FileInputStream in = new FileInputStream(configPath.toFile())) {properties.load(in);}
+
+        return properties;
+    }
 
     private static class EmailHeaders {
         private final String from;
@@ -158,6 +212,7 @@ public class VacationResponder {
 
     private static void checkMailboxOnce(
             String pop3Host,
+            int pop3Port,
             String email,
             String password,
             String smtpHost,
@@ -166,7 +221,7 @@ public class VacationResponder {
             HashSet<String> repliedSenders,
             Path repliedSendersPath) throws IOException {
         try (
-                Socket popSocket = new Socket(pop3Host, PORT);
+            Socket popSocket = new Socket(pop3Host, pop3Port);
                 BufferedReader popIn = new BufferedReader(new InputStreamReader(popSocket.getInputStream()));
                 BufferedWriter popOut = new BufferedWriter(new OutputStreamWriter(popSocket.getOutputStream()))) {
 
@@ -316,26 +371,78 @@ public class VacationResponder {
     }
 
     public static void main(String[] args) {
-        if (args.length != 6) {
-            System.out.println(
-                    "Usage: java VacationResponder <pop3Host> <email> <password> <smtpHost> <smtpPort> <fromEmail>");
+        if (args.length != 0 && args.length != 6 && args.length != 7) {
+            System.out.println("Usage: java VacationResponder <pop3Host> <email> <password> <smtpHost> <smtpPort> <fromEmail> [pop3Port]");
+            System.out.println("Or run without args to use built-in defaults for local testing.");
             return;
         }
 
-        String pop3Host = args[0];
-        String email = args[1];
-        String password = args[2];
-        String smtpHost = args[3];
+        String pop3Host;
+        int pop3Port;
+        String email;
+        String password;
+        String smtpHost;
         int smtpPort;
+        String fromEmail;
 
-        try {
-            smtpPort = Integer.parseInt(args[4]);
-        } catch (NumberFormatException e) {
-            System.err.println("Invalid SMTP port: " + args[4]);
+        if (args.length == 0) {
+            Properties properties;
+            try {
+            properties = loadConfigProperties(Paths.get(CONFIG_FILE));
+            } catch (IOException e) {
+            System.err.println("Could not read " + CONFIG_FILE + ": " + e.getMessage());
             return;
+            }
+
+            pop3Host = propertyOrDefault(properties, "pop3.host",
+                envStringOrDefault("VACATION_POP3_HOST", DEFAULT_POP3_HOST));
+            pop3Port = propertyIntOrDefault(properties, "pop3.port",
+                envIntOrDefault("VACATION_POP3_PORT", DEFAULT_POP3_PORT_FALLBACK));
+            email = propertyOrDefault(properties, "email",
+                envStringOrDefault("VACATION_EMAIL", DEFAULT_EMAIL));
+            password = propertyOrDefault(properties, "password",
+                envStringOrDefault("VACATION_PASSWORD", DEFAULT_PASSWORD));
+            smtpHost = propertyOrDefault(properties, "smtp.host",
+                envStringOrDefault("VACATION_SMTP_HOST", DEFAULT_SMTP_HOST));
+            smtpPort = propertyIntOrDefault(properties, "smtp.port",
+                envIntOrDefault("VACATION_SMTP_PORT", DEFAULT_SMTP_PORT));
+            fromEmail = propertyOrDefault(properties, "from.email",
+                envStringOrDefault("VACATION_FROM_EMAIL", DEFAULT_FROM_EMAIL));
+
+            System.out.println("POP3 host: " + pop3Host);
+            System.out.println("POP3 port: " + pop3Port);
+            System.out.println("Email: " + email);
+            System.out.println("SMTP host: " + smtpHost);
+            System.out.println("SMTP port: " + smtpPort);
+            System.out.println("From email: " + fromEmail);
+        } 
+        else {
+            pop3Host = args[0];
+            email = args[1];
+            password = args[2];
+            smtpHost = args[3];
+
+            try {
+                smtpPort = Integer.parseInt(args[4]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid SMTP port: " + args[4]);
+                return;
+            }
+
+            fromEmail = args[5];
+
+            if (args.length == 7) {
+                try {
+                    pop3Port = Integer.parseInt(args[6]);
+                } catch (NumberFormatException e) {
+                    System.err.println("Invalid POP3 port: " + args[6]);
+                    return;
+                }
+            } else {
+                pop3Port = DEFAULT_POP3_PORT;
+            }
         }
 
-        String fromEmail = args[5];
         Path repliedSendersPath = Paths.get(REPLIED_SENDERS);
 
         try {
@@ -345,21 +452,28 @@ public class VacationResponder {
 
             while (true) {
                 try {
-                    checkMailboxOnce(pop3Host, email, password, smtpHost, smtpPort, fromEmail, repliedSenders,
+                    checkMailboxOnce(pop3Host, pop3Port, email, password, smtpHost, smtpPort, fromEmail, repliedSenders,
                             repliedSendersPath);
-                } catch (IOException e) {
+                }
+                catch (ConnectException e) {
+                    System.err.println("Mailbox check failed: Cannot connect to POP3 server at " + pop3Host + ":"
+                            + pop3Port + ". Start a POP3 server or pass the correct host/port.");
+                }
+                catch (IOException e) {
                     System.err.println("Mailbox check failed: " + e.getMessage());
                 }
 
                 try {
                     Thread.sleep(POLL_INTERVAL * 1000L);
-                } catch (InterruptedException e) {
+                } 
+                catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     System.out.println("Interrupted. Shutting down vacation responder.");
                     break;
                 }
             }
-        } catch (IOException e) {
+        } 
+        catch (IOException e) {
             System.err.println("VacationResponder failed: " + e.getMessage());
         }
     }
