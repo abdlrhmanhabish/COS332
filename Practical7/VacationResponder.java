@@ -6,57 +6,76 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.UUID;
 
 public class VacationResponder {
 
     private static final int PORT = 110;
+    private static final String SUBJECT = "prac7";
+    private static final int POLL_INTERVAL = 30;
+    private static final String REPLIED_SENDERS = "replied_senders.txt";
+
     private static class EmailHeaders {
         private final String from;
         private final String subject;
+        private final boolean isMailingList;
 
-        EmailHeaders(String from, String subject) {
+        EmailHeaders(String from, String subject, boolean isMailingList) {
             this.from = from;
             this.subject = subject;
+            this.isMailingList = isMailingList;
         }
     }
 
-    // so basically , just egts email address from header 
+    // so basically , just Gets email address from header
     private static String extract(String fromHeader) {
-        if (fromHeader == null) return null;
+        if (fromHeader == null)
+            return null;
 
         String trimmed = fromHeader.trim();
         int start = trimmed.indexOf('<');
         int end = trimmed.indexOf('>');
 
-        // If the header has <...>, use the address inside angle brackets 
-        if (start >= 0 && end > start) return trimmed.substring(start + 1, end).trim();
+        // If the header has <...>, use the address inside angle brackets
+        if (start >= 0 && end > start)
+            return trimmed.substring(start + 1, end).trim();
 
         int atIndex = trimmed.indexOf('@');
-        // A valid email local-part must exist before '@'; otherwise treat header as invalid.
-        if (atIndex <= 0) return null;
+        // A valid email local part must exist before '@'; otherwise treat header as invalid.
+        if (atIndex <= 0)
+            return null;
 
         int left = atIndex - 1;
-        while (left >= 0 && !Character.isWhitespace(trimmed.charAt(left)) && trimmed.charAt(left) != '<' && trimmed.charAt(left) != '"') {
+        while (left >= 0 && !Character.isWhitespace(trimmed.charAt(left)) && trimmed.charAt(left) != '<'
+                && trimmed.charAt(left) != '"') {
             left--;
         }
 
         int right = atIndex + 1;
-        while (right < trimmed.length() && !Character.isWhitespace(trimmed.charAt(right)) && trimmed.charAt(right) != '>' && trimmed.charAt(right) != '"') {
+        while (right < trimmed.length() && !Character.isWhitespace(trimmed.charAt(right))
+                && trimmed.charAt(right) != '>' && trimmed.charAt(right) != '"') {
             right++;
         }
 
         String possibleEmail = trimmed.substring(left + 1, right).replaceAll("[;,]$", "").trim();
-        if (possibleEmail.contains("@")) return possibleEmail;
+        if (possibleEmail.contains("@"))
+            return possibleEmail;
 
         return null;
     }
 
-    // Validating POP3 responses, throws IOException if response is null or doesn't start with +OK
+    // Validating POP3 responses, throws IOException if response is null or doesn't
+    // start with +OK
     private static void expectPopOk(String response, String command) throws IOException {
         if (response == null || !response.startsWith("+OK")) {
             throw new IOException("POP3 command failed (" + command + "): " + response);
@@ -67,33 +86,145 @@ public class VacationResponder {
     private static int parseMessageCount(String statResponse) throws IOException {
         String[] parts = statResponse.split("\\s+");
         // STAT must look like: "+OK <count> <size>"; without a second token, count cannot be read.
-        if (parts.length < 2) throw new IOException("Invalid STAT response: " + statResponse);
+        if (parts.length < 2)
+            throw new IOException("Invalid STAT response: " + statResponse);
 
-        try { return Integer.parseInt(parts[1]); } 
-        catch (NumberFormatException e) { throw new IOException("Invalid message count in STAT response: " + statResponse, e); }
+        try {
+            return Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            throw new IOException("Invalid message count in STAT response: " + statResponse, e);
+        }
     }
 
-    // Runs TOP <n> 0, reads headers until '.', and returns sender + subject only.
-    private static EmailHeaders readTopHeaders(BufferedReader in, BufferedWriter out, int messageNumber) throws IOException {
+    // Runs TOP <n> 0, reads headers until '.', and returns sender + subject +
+    // mailing list flag.
+    private static EmailHeaders readTopHeaders(BufferedReader in, BufferedWriter out, int messageNumber)
+            throws IOException {
         sendCommand(out, "TOP " + messageNumber + " 0");
         String topResponse = in.readLine();
         expectPopOk(topResponse, "TOP " + messageNumber + " 0");
 
         String fromHeader = null;
         String subjectHeader = "";
+        boolean isMailingList = false;
 
         String line;
         while ((line = in.readLine()) != null) {
             // POP3 marks end of TOP output with a single dot line.
-            if (".".equals(line)) break;
+            if (".".equals(line))
+                break;
 
-            // Capture sender from the From header for reply else capture subject for reply, ignore other headers
-            if (line.toLowerCase().startsWith("from:")) fromHeader = line.substring(5).trim();
-            else if (line.toLowerCase().startsWith("subject:")) subjectHeader = line.substring(8).trim();
+            String lowerLine = line.toLowerCase();
+            // Capture sender from the From header for reply else capture subject for reply,
+            // ignore other headers
+            if (lowerLine.startsWith("from:"))
+                fromHeader = line.substring(5).trim();
+            else if (lowerLine.startsWith("subject:"))
+                subjectHeader = line.substring(8).trim();
+            // Check for mailing list headers
+            else if (lowerLine.startsWith("list-id:") || lowerLine.startsWith("list-post:"))
+                isMailingList = true;
         }
 
         String sender = extract(fromHeader);
-        return new EmailHeaders(sender, subjectHeader);
+        return new EmailHeaders(sender, subjectHeader, isMailingList);
+    }
+
+    private static HashSet<String> loadRepliedSenders(Path repliedSendersPath) throws IOException {
+        HashSet<String> replied = new HashSet<>();
+        if (!Files.exists(repliedSendersPath)) {
+            Files.createFile(repliedSendersPath);
+            return replied;
+        }
+
+        List<String> lines = Files.readAllLines(repliedSendersPath);
+        for (String line : lines) {
+            String sender = line.trim().toLowerCase();
+            if (!sender.isEmpty())
+                replied.add(sender);
+        }
+        return replied;
+    }
+
+    private static void persistRepliedSender(Path repliedSendersPath, String sender) throws IOException {
+        List<String> line = new ArrayList<>();
+        line.add(sender.toLowerCase());
+        Files.write(
+                repliedSendersPath,
+                line,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND);
+    }
+
+    private static void checkMailboxOnce(
+            String pop3Host,
+            String email,
+            String password,
+            String smtpHost,
+            int smtpPort,
+            String fromEmail,
+            HashSet<String> repliedSenders,
+            Path repliedSendersPath) throws IOException {
+        try (
+                Socket popSocket = new Socket(pop3Host, PORT);
+                BufferedReader popIn = new BufferedReader(new InputStreamReader(popSocket.getInputStream()));
+                BufferedWriter popOut = new BufferedWriter(new OutputStreamWriter(popSocket.getOutputStream()))) {
+
+            String response = popIn.readLine();
+            expectPopOk(response, "greeting");
+
+            sendCommand(popOut, "USER " + email);
+            response = popIn.readLine();
+            expectPopOk(response, "USER");
+
+            sendCommand(popOut, "PASS " + password);
+            response = popIn.readLine();
+            expectPopOk(response, "PASS");
+
+            sendCommand(popOut, "STAT");
+            response = popIn.readLine();
+            expectPopOk(response, "STAT");
+            int totalEmails = parseMessageCount(response);
+
+            System.out.println("Successfully logged in. Found " + totalEmails + " email(s) in inbox.");
+
+            for (int i = 1; i <= totalEmails; i++) {
+                EmailHeaders headers = readTopHeaders(popIn, popOut, i);
+                if (headers.from == null || headers.from.isEmpty())
+                    continue;
+
+                // Skip mailing list emails
+                if (headers.isMailingList) {
+                    System.out.println("Skipping " + headers.from + " (mailing list detected).");
+                    continue;
+                }
+
+                String subject = headers.subject == null ? "" : headers.subject.trim();
+                if (!SUBJECT.equalsIgnoreCase(subject)) {
+                    System.out.println("Skipping " + headers.from + " (subject is not '" + SUBJECT + "').");
+                    continue;
+                }
+
+                String normalizedSender = headers.from.trim().toLowerCase();
+                if (repliedSenders.contains(normalizedSender)) {
+                    System.out.println("Skipping " + headers.from + " (already replied previously).");
+                    continue;
+                }
+
+                String replySubject = "Re: " + headers.subject;
+                String replyBody = "I am currently on vacation and will reply when I return.";
+                System.out.println("Sending auto-reply to: " + headers.from + " | Subject: " + replySubject);
+                sendEmail(smtpHost, smtpPort, fromEmail, headers.from, replySubject, replyBody);
+
+                repliedSenders.add(normalizedSender);
+                persistRepliedSender(repliedSendersPath, normalizedSender);
+            }
+
+            System.out.println("Finished checking emails. Logging out.");
+            sendCommand(popOut, "QUIT");
+            response = popIn.readLine();
+            expectPopOk(response, "QUIT");
+        }
     }
 
     // Prac 6 code, never change anything
@@ -139,7 +270,8 @@ public class VacationResponder {
             String response = readServerReply(in);
             checkReplyCode(response, 220);
 
-            // bonus marks RFC 5321 Section 4.1.1.1, modern SMTP server wants EHLO and not HELO, readServersReply handles the multiple line list thing
+            // bonus marks RFC 5321 Section 4.1.1.1, modern SMTP server wants EHLO and not
+            // HELO, readServersReply handles the multiple line list thing
             sendCommand(out, "EHLO localhost");
             response = readServerReply(in);
             if (!response.startsWith("250")) {
@@ -163,10 +295,11 @@ public class VacationResponder {
             out.write("From: " + from + "\r\n");
             out.write("To: " + to + "\r\n");
             out.write("Subject: " + subject + "\r\n");
-            // bonus marks: RFC 5322 Section 3.6, requires date header in  rfc 1123 format
+            // bonus marks: RFC 5322 Section 3.6, requires date header in rfc 1123 format
             out.write("Date: " + DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("UTC"))));
             out.write("\r\n");
-            // bonus marks: unique message ID, format is not strictly defined but this is a common approach
+            // bonus marks: unique message ID, format is not strictly defined but this is a
+            // common approach
             out.write("MessageID: <" + UUID.randomUUID().toString() + "@eventreminder.local>\r\n");
             out.write("\r\n");
             out.write(body + "\r\n");
@@ -184,7 +317,8 @@ public class VacationResponder {
 
     public static void main(String[] args) {
         if (args.length != 6) {
-            System.out.println("Usage: java VacationResponder <pop3Host> <email> <password> <smtpHost> <smtpPort> <fromEmail>");
+            System.out.println(
+                    "Usage: java VacationResponder <pop3Host> <email> <password> <smtpHost> <smtpPort> <fromEmail>");
             return;
         }
 
@@ -196,60 +330,36 @@ public class VacationResponder {
 
         try {
             smtpPort = Integer.parseInt(args[4]);
-        } 
-        catch (NumberFormatException e) {
+        } catch (NumberFormatException e) {
             System.err.println("Invalid SMTP port: " + args[4]);
             return;
         }
 
         String fromEmail = args[5];
-        HashSet<String> repliedSenders = new HashSet<>();
+        Path repliedSendersPath = Paths.get(REPLIED_SENDERS);
 
-        try (
-                Socket popSocket = new Socket(pop3Host, PORT);
-                BufferedReader popIn = new BufferedReader(new InputStreamReader(popSocket.getInputStream()));
-                BufferedWriter popOut = new BufferedWriter(new OutputStreamWriter(popSocket.getOutputStream()))) {
+        try {
+            HashSet<String> repliedSenders = loadRepliedSenders(repliedSendersPath);
+            System.out.println("Loaded " + repliedSenders.size() + " previously replied sender(s).");
+            System.out.println("Vacation responder running. Polling every " + POLL_INTERVAL + " seconds.");
 
-            String response = popIn.readLine();
-            expectPopOk(response, "greeting");
-
-            sendCommand(popOut, "USER " + email);
-            response = popIn.readLine();
-            expectPopOk(response, "USER");
-
-            sendCommand(popOut, "PASS " + password);
-            response = popIn.readLine();
-            expectPopOk(response, "PASS");
-
-            sendCommand(popOut, "STAT");
-            response = popIn.readLine();
-            expectPopOk(response, "STAT");
-            int totalEmails = parseMessageCount(response);
-
-            System.out.println("Successfully logged in. Found " + totalEmails + " email(s) in inbox.");
-
-            for (int i = 1; i <= totalEmails; i++) {
-                EmailHeaders headers = readTopHeaders(popIn, popOut, i);
-                if (headers.from == null || headers.from.isEmpty()) continue;
-                if (repliedSenders.contains(headers.from)) {
-                    System.out.println("Skipping " + headers.from + " (already replied during this session).");
-                    continue;
+            while (true) {
+                try {
+                    checkMailboxOnce(pop3Host, email, password, smtpHost, smtpPort, fromEmail, repliedSenders,
+                            repliedSendersPath);
+                } catch (IOException e) {
+                    System.err.println("Mailbox check failed: " + e.getMessage());
                 }
 
-                repliedSenders.add(headers.from);
-                String replySubject = "Re: " + headers.subject;
-                String replyBody = "I am currently on vacation and will reply when I return.";
-                System.out.println("Sending auto-reply to: " + headers.from + " | Subject: " + replySubject);
-                sendEmail(smtpHost, smtpPort, fromEmail, headers.from, replySubject, replyBody);
+                try {
+                    Thread.sleep(POLL_INTERVAL * 1000L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    System.out.println("Interrupted. Shutting down vacation responder.");
+                    break;
+                }
             }
-
-            System.out.println("Finished checking emails. Logging out.");
-            sendCommand(popOut, "QUIT");
-            response = popIn.readLine();
-            expectPopOk(response, "QUIT");
-
-        } 
-        catch (IOException e) {
+        } catch (IOException e) {
             System.err.println("VacationResponder failed: " + e.getMessage());
         }
     }
