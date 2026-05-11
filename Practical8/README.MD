@@ -1,6 +1,4 @@
-# COS332
-
-## Practical 8: FTP Backup Client Demo
+# Practical 8: FTP Backup Client Demo
 
 This demo shows how to run the FTP backup client and verify the bonus features
 (passive mode, versioned backups, deletion handling, and remote directory creation).
